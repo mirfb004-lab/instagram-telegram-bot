@@ -73,14 +73,24 @@ def normalize_cookie_string(cookie_str: str) -> str:
 
 
 def validate_cookies(raw_cookies: str) -> dict:
-    """Check whether Instagram accepts the session and return its current user."""
+    """Check whether Instagram accepts the session using resilient web fallbacks."""
     cookies = parse_cookie_string(raw_cookies)
     if not cookies:
         raise ValueError("No cookies could be parsed")
+    headers = HEADERS.copy()
+    headers.update({
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://www.instagram.com/",
+        "Origin": "https://www.instagram.com",
+    })
+    if cookies.get("csrftoken"):
+        headers["X-CSRFToken"] = cookies["csrftoken"]
+
+    # Some Instagram deployments reject the historical ?edit=true variant
+    # with 400 even when the session is valid. Try the plain endpoint first.
     response = requests.get(
         "https://www.instagram.com/api/v1/accounts/current_user/",
-        params={"edit": "true"},
-        headers=HEADERS,
+        headers=headers,
         cookies=cookies,
         timeout=20,
     )
@@ -88,15 +98,24 @@ def validate_cookies(raw_cookies: str) -> dict:
         raise PermissionError("Instagram rejected these cookies or the session has expired")
     if response.status_code == 429:
         raise ConnectionRefusedError("Instagram rate-limited the cookie check")
-    response.raise_for_status()
-    payload = response.json()
-    user = payload.get("user") or payload.get("data", {}).get("user")
-    if not user:
-        raise PermissionError("Instagram did not return an authenticated user")
-    return {
-        "id": str(user.get("pk") or user.get("id") or ""),
-        "username": user.get("username", "unknown"),
-    }
+    if response.status_code == 200:
+        try:
+            payload = response.json()
+            user = payload.get("user") or payload.get("data", {}).get("user")
+            if user:
+                return {"id": str(user.get("pk") or user.get("id") or ""), "username": user.get("username", "unknown")}
+        except ValueError:
+            pass
+
+    # Final fallback: a valid session normally receives the authenticated
+    # account page rather than a login redirect. This avoids treating a
+    # harmless API 400 as proof that the cookies are invalid.
+    page = requests.get("https://www.instagram.com/accounts/edit/", headers=headers, cookies=cookies, timeout=20, allow_redirects=True)
+    if page.status_code in (401, 403) or "accounts/login" in page.url or "login" in page.url.lower():
+        raise PermissionError("Instagram rejected these cookies or the session has expired")
+    if page.status_code == 200:
+        return {"id": cookies.get("ds_user_id", ""), "username": "authenticated session"}
+    raise RuntimeError(f"Instagram cookie check could not be completed (HTTP {response.status_code})")
 
 
 def load_cookie_file(path: str) -> str:
