@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -16,12 +17,39 @@ RETRYABLE_EXCEPTIONS = (PermissionError, ConnectionRefusedError, requests.Reques
 
 
 def parse_cookie_string(cookie_str: str) -> dict:
+    """Parse common browser cookie formats into a requests cookie dictionary."""
+    if not isinstance(cookie_str, str):
+        return {}
+    text = cookie_str.strip()
+    if text.lower().startswith("cookie:"):
+        text = text.split(":", 1)[1].strip()
+
+    # Accept a pasted JSON browser export as well as the file-upload path.
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return {str(key): str(value) for key, value in parsed.items() if str(key)}
+        if isinstance(parsed, list):
+            return {
+                str(item["name"]): str(item.get("value", ""))
+                for item in parsed
+                if isinstance(item, dict) and item.get("name")
+            }
+    except (json.JSONDecodeError, TypeError):
+        pass
+
     cookies = {}
-    for item in cookie_str.split(";"):
-        if "=" in item:
-            key, value = item.strip().split("=", 1)
-            if key:
-                cookies[key] = value
+    # Supports semicolons, newlines, commas, and whitespace between pairs:
+    # sessionid=abc; ds_user_id=123, csrftoken=xyz
+    parts = re.split(r";|\r?\n|,\s*(?=[A-Za-z0-9_.%-]+\s*=)|\s+(?=[A-Za-z0-9_.%-]+\s*=)", text)
+    for item in parts:
+        item = item.strip().lstrip("#HttpOnly_")
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if key and value:
+            cookies[key] = value
     return cookies
 
 
