@@ -209,7 +209,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     file = await doc.get_file()
     content = (await file.download_as_bytearray()).decode("utf-8")
-    if "cookie" in name:
+    looks_like_json_cookie_export = (
+        content.lstrip().startswith("[")
+        and '"name"' in content
+        and '"value"' in content
+    )
+    if "cookie" in name or looks_like_json_cookie_export:
         slot = next((str(i) for i in range(1, 4) if f"backup{i}" in name or f"backup_{i}" in name), None)
         key = f"cookies_backup_{slot}" if slot else "cookies"
         normalized = scraper.normalize_cookie_string(content)
