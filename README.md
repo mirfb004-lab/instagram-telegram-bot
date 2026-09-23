@@ -37,6 +37,8 @@ Send `/start`, then configure everything else through the bot:
 
 The primary cookie is tried first. The three backup cookies are automatically tried next when a request fails because of invalid cookies, rate limiting, or a request error.
 
+Every cookie command or cookie-file upload is now normalized, saved, and checked immediately against Instagram. The bot reports either `WORKING` with the detected Instagram username or `NOT WORKING` with a safe error message. Cookie values are never echoed back into Telegram responses.
+
 Cloudinary setup requires an unsigned upload preset in the Cloudinary dashboard. The cloud name and preset are entered through Telegram and saved in the bot database; they do not need to be Railway variables.
 
 ## Telegram commands
@@ -69,6 +71,8 @@ You can also upload these files directly to the bot:
 - `cookies_backup3.txt` or `cookies_backup3.json` — backup 3
 
 Raw semicolon-separated cookies, JSON browser exports, and Netscape cookie exports are supported.
+
+The parser also accepts a pasted `Cookie:` header, newline-separated pairs, comma-separated pairs, whitespace-separated pairs, and Netscape rows pasted directly into Telegram. No parser can safely accept literally arbitrary text; the input must contain recognizable cookie name/value data.
 
 ### Accounts and follower tracking
 

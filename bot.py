@@ -79,11 +79,22 @@ async def save_cookie_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not value:
         await update.message.reply_text(f"Usage: /{label} sessionid=...; ds_user_id=...")
         return
-    if not scraper.parse_cookie_string(value):
-        await update.message.reply_text("Invalid cookie format. Use name=value; name2=value2")
+    normalized = scraper.normalize_cookie_string(value)
+    if not normalized:
+        await update.message.reply_text("Could not read cookies. Send a browser cookie export, JSON cookie list, or name=value pairs.")
         return
-    db.set_setting(key, value)
-    await update.message.reply_text(f"{label} cookies saved securely in the bot database.")
+    db.set_setting(key, normalized)
+    try:
+        user = await asyncio.to_thread(scraper.validate_cookies, normalized)
+        await update.message.reply_text(
+            f"✅ Cookies saved and WORKING. Instagram account: @{user['username']}\n"
+            f"Cookie slot: {label}"
+        )
+    except Exception as exc:
+        await update.message.reply_text(
+            f"⚠️ Cookies saved but NOT WORKING.\nCookie slot: {label}\n"
+            f"Reason: {str(exc)[:500]}\nReplace this cookie slot and try again."
+        )
 
 
 @restricted
@@ -201,8 +212,17 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "cookie" in name:
         slot = next((str(i) for i in range(1, 4) if f"backup{i}" in name or f"backup_{i}" in name), None)
         key = f"cookies_backup_{slot}" if slot else "cookies"
-        db.set_setting(key, content)
-        await update.message.reply_text(f"Cookie file saved as {'backup ' + slot if slot else 'primary'}.")
+        normalized = scraper.normalize_cookie_string(content)
+        if not normalized:
+            await update.message.reply_text("Could not read cookies from this file. Supported formats: browser JSON, Netscape, or name=value pairs.")
+            return
+        db.set_setting(key, normalized)
+        label = f"backup {slot}" if slot else "primary"
+        try:
+            user = await asyncio.to_thread(scraper.validate_cookies, normalized)
+            await update.message.reply_text(f"✅ Cookie file saved and WORKING as {label}. Instagram account: @{user['username']}")
+        except Exception as exc:
+            await update.message.reply_text(f"⚠️ Cookie file saved as {label} but NOT WORKING. Reason: {str(exc)[:500]}")
     else:
         accounts = [line.strip() for line in content.splitlines() if line.strip()]
         db.add_accounts(accounts)

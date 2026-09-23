@@ -38,6 +38,19 @@ def parse_cookie_string(cookie_str: str) -> dict:
     except (json.JSONDecodeError, TypeError):
         pass
 
+    # Netscape exports pasted directly into Telegram contain tab-separated
+    # domain/metadata/name/value columns. Parse those before generic pairs.
+    if "\t" in text:
+        netscape = {}
+        for line in text.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            fields = line.split("\t")
+            if len(fields) >= 7 and fields[5].strip() and fields[6].strip():
+                netscape[fields[5].strip()] = fields[6].strip()
+        if netscape:
+            return netscape
+
     cookies = {}
     # Supports semicolons, newlines, commas, and whitespace between pairs:
     # sessionid=abc; ds_user_id=123, csrftoken=xyz
@@ -51,6 +64,39 @@ def parse_cookie_string(cookie_str: str) -> dict:
         if key and value:
             cookies[key] = value
     return cookies
+
+
+def normalize_cookie_string(cookie_str: str) -> str:
+    """Convert supported browser formats into a canonical Cookie header string."""
+    cookies = parse_cookie_string(cookie_str)
+    return "; ".join(f"{key}={value}" for key, value in cookies.items())
+
+
+def validate_cookies(raw_cookies: str) -> dict:
+    """Check whether Instagram accepts the session and return its current user."""
+    cookies = parse_cookie_string(raw_cookies)
+    if not cookies:
+        raise ValueError("No cookies could be parsed")
+    response = requests.get(
+        "https://www.instagram.com/api/v1/accounts/current_user/",
+        params={"edit": "true"},
+        headers=HEADERS,
+        cookies=cookies,
+        timeout=20,
+    )
+    if response.status_code in (401, 403):
+        raise PermissionError("Instagram rejected these cookies or the session has expired")
+    if response.status_code == 429:
+        raise ConnectionRefusedError("Instagram rate-limited the cookie check")
+    response.raise_for_status()
+    payload = response.json()
+    user = payload.get("user") or payload.get("data", {}).get("user")
+    if not user:
+        raise PermissionError("Instagram did not return an authenticated user")
+    return {
+        "id": str(user.get("pk") or user.get("id") or ""),
+        "username": user.get("username", "unknown"),
+    }
 
 
 def load_cookie_file(path: str) -> str:
